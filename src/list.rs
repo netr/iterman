@@ -258,6 +258,56 @@ where
     }
 }
 
+pub struct MemoryArrayList<T: Clone> {
+    lists: Arc<Mutex<Vec<Vec<T>>>>,
+    round_robin: bool,
+    arr_index: AtomicUsize,
+    line_indexes: Arc<Mutex<Vec<usize>>>,
+}
+
+impl<T: Clone> MemoryArrayList<T> {
+    pub fn new(mem_arr: Vec<Vec<T>>) -> Self {
+        Self {
+            lists: Arc::new(Mutex::new(mem_arr)),
+            round_robin: false,
+            arr_index: AtomicUsize::new(0),
+            line_indexes: Arc::new(Mutex::new(vec![0])),
+        }
+    }
+}
+
+pub struct BufferArrayList<T: Read + Seek> {
+    buf_reader: Arc<Mutex<Vec<BufferList<T>>>>,
+    round_robin: bool,
+    arr_index: AtomicUsize,
+    line_indexes: Arc<Mutex<Vec<usize>>>,
+    bytes_offset: AtomicUsize,
+}
+
+impl<T: Read + Seek> BufferArrayList<T> {
+    pub fn new(buf_arr: Vec<BufferList<T>>) -> Self {
+        Self {
+            buf_reader: Arc::new(Mutex::new(buf_arr)),
+            round_robin: false,
+            arr_index: AtomicUsize::new(0),
+            line_indexes: Arc::new(Mutex::new(vec![0])),
+            bytes_offset: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl<T: Read + Seek> Iterator for BufferArrayList<T>
+where
+    T: Read + Seek,
+{
+    type Item = String;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut string = String::new();
+        Some(string)
+    }
+}
+
 /// Create a [MemoryList] from a directory by reading each file into memory.
 /// # Examples
 /// ```no-run
@@ -317,6 +367,14 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
+
+    #[test]
+    fn it_should_create_buffer_array_list() {
+        let reader = mock_buffer_reader();
+        let buf_reader = BufferList::new(reader);
+        let list = BufferArrayList::new(vec![buf_reader]);
+        assert_eq!(list.collect::<Vec<String>>(), ["1", "2", "3"]);
+    }
 
     #[test]
     #[ignore]
