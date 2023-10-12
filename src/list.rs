@@ -38,9 +38,9 @@ impl<T: Clone> MemoryList<T> {
             return Ok(line_index);
         }
 
-        Err(IterManError::OutOfBounds {
-            idx: line_index,
-            limits: self.vec.len(),
+        Err(IterManError::MemoryOutOfBounds {
+            line_index,
+            max_len: self.vec.len(),
         })
     }
 
@@ -121,18 +121,20 @@ impl<T: Read + Seek> StreamList<T> {
         // https://doc.rust-lang.org/stable/std/io/trait.Seek.html#method.stream_len
         let stream_len = match self.buf_reader.seek(SeekFrom::End(0)).ok() {
             None => {
-                return Err(IterManError::OutOfBounds {
-                    idx: bytes_offset,
-                    limits: 0,
+                return Err(IterManError::StreamOutOfBounds {
+                    line_index,
+                    bytes_offset,
+                    max_len: 0,
                 })
             }
             Some(len) => len,
         };
 
         if stream_len < bytes_offset as u64 {
-            return Err(IterManError::OutOfBounds {
-                idx: bytes_offset,
-                limits: stream_len as usize,
+            return Err(IterManError::StreamOutOfBounds {
+                line_index,
+                bytes_offset,
+                max_len: stream_len as usize,
             });
         }
 
@@ -147,9 +149,10 @@ impl<T: Read + Seek> StreamList<T> {
             return Ok(self.bytes_offset());
         }
 
-        Err(IterManError::OutOfBounds {
-            idx: bytes_offset,
-            limits: stream_len as usize,
+        Err(IterManError::StreamOutOfBounds {
+            line_index,
+            bytes_offset,
+            max_len: stream_len as usize,
         })
     }
 
@@ -280,7 +283,13 @@ mod tests {
     fn memory_list_seek_should_return_false_if_out_of_bounds() {
         let mut list_iter = MemoryList::new(vec![2, 3, 4], false);
         let e = list_iter.seek(6).unwrap_err();
-        assert_eq!(e.to_string(), "invalid index 6, expected at most 3");
+        assert_eq!(
+            e,
+            IterManError::MemoryOutOfBounds {
+                line_index: 6,
+                max_len: 3,
+            }
+        );
     }
 
     #[test]
@@ -298,7 +307,14 @@ mod tests {
         let reader = mock_buffer_reader();
         let mut list_iter = StreamList::new(reader, false);
         let e = list_iter.seek(7, 50).unwrap_err();
-        assert_eq!(e.to_string(), "invalid index 50, expected at most 6");
+        assert_eq!(
+            e,
+            IterManError::StreamOutOfBounds {
+                line_index: 7,
+                bytes_offset: 50,
+                max_len: 6,
+            }
+        );
     }
 
     fn mock_buffer_reader<'a>() -> BufReader<Cursor<&'a str>> {
