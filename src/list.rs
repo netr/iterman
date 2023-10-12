@@ -1,5 +1,6 @@
 use crate::error::IterManError;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 trait ListLike {
@@ -11,7 +12,7 @@ trait ListLike {
 struct MemoryList<T: Clone> {
     vec: Arc<Mutex<Vec<T>>>,
     round_robin: bool,
-    line_index: usize,
+    line_index: AtomicUsize,
 }
 
 impl<T: Clone> MemoryList<T> {
@@ -19,7 +20,7 @@ impl<T: Clone> MemoryList<T> {
         Self {
             vec: Arc::new(Mutex::new(vec)),
             round_robin: false,
-            line_index: 0,
+            line_index: AtomicUsize::new(0),
         }
     }
 
@@ -31,15 +32,22 @@ impl<T: Clone> MemoryList<T> {
         }
     }
 
+    /// Build a [MemoryList]] and set the initial `line_index` pointer.
+    /// # Examples
+    /// ```no-run
+    /// let mut list = MemoryList::new_round_robin(vec![2, 3, 4]).with_seek_to(2);
+    /// ```
     pub fn with_seek_to(mut self, line_index: usize) -> Self {
         self.seek(line_index).unwrap_or_default();
         self
     }
 
     /// Seek
+    /// Should this be public?
+    /// TODO: Revisit when persistence is added
     pub fn seek(&mut self, line_index: usize) -> Result<usize, IterManError> {
         if line_index < self.vec.lock().unwrap().len() {
-            self.line_index = line_index;
+            self.line_index.store(line_index, Ordering::Relaxed);
             return Ok(line_index);
         }
 
@@ -49,8 +57,8 @@ impl<T: Clone> MemoryList<T> {
         })
     }
 
-    pub fn index(&self) -> usize {
-        self.line_index
+    pub fn line_index(&self) -> usize {
+        self.line_index.load(Ordering::Relaxed)
     }
 }
 
@@ -58,13 +66,13 @@ impl<T: Clone> ListLike for MemoryList<T> {
     type Item = T;
 
     fn iter(&mut self) -> Option<Self::Item> {
-        if self.round_robin && self.line_index >= self.vec.lock().unwrap().len() {
-            self.line_index = 0;
+        if self.round_robin && self.line_index() >= self.vec.lock().unwrap().len() {
+            self.line_index.store(0, Ordering::Relaxed);
         }
 
-        if self.line_index < self.vec.lock().unwrap().len() {
-            let val = self.vec.lock().unwrap()[self.line_index].clone();
-            self.line_index += 1;
+        if self.line_index() < self.vec.lock().unwrap().len() {
+            let val = self.vec.lock().unwrap()[self.line_index()].clone();
+            self.line_index.fetch_add(1, Ordering::SeqCst);
             Some(val)
         } else {
             None
@@ -86,8 +94,8 @@ where
 struct StreamList<T: Read + Seek> {
     buf_reader: Arc<Mutex<BufReader<T>>>,
     round_robin: bool,
-    line_index: usize,
-    bytes_offset: usize,
+    line_index: AtomicUsize,
+    bytes_offset: AtomicUsize,
 }
 
 impl<T: Read + Seek> StreamList<T> {
@@ -95,8 +103,8 @@ impl<T: Read + Seek> StreamList<T> {
         Self {
             buf_reader: Arc::new(Mutex::new(buf_reader)),
             round_robin: false,
-            line_index: 0,
-            bytes_offset: 0,
+            line_index: AtomicUsize::new(0),
+            bytes_offset: AtomicUsize::new(0),
         }
     }
 
@@ -108,6 +116,12 @@ impl<T: Read + Seek> StreamList<T> {
         }
     }
 
+    /// Build a [StreamList]] and set the initial `line_index` and `bytes_offset` pointers.
+    /// # Examples
+    /// ```no-run
+    /// let reader = BufReader::new(Cursor::new("hello\nworld"));
+    /// let list = StreamList::new(reader).with_seek_to(1, 6);
+    /// ```
     pub fn with_seek_to(mut self, line_index: usize, bytes_offset: usize) -> Self {
         self.seek(line_index, bytes_offset).unwrap_or_default();
         self
@@ -115,14 +129,14 @@ impl<T: Read + Seek> StreamList<T> {
 
     /// Used internally to manage the line index and byte offset
     fn incr(&mut self, bytes_read: &usize) {
-        self.line_index += 1;
-        self.bytes_offset += bytes_read;
+        self.line_index.fetch_add(1, Ordering::SeqCst);
+        self.bytes_offset.fetch_add(*bytes_read, Ordering::SeqCst);
     }
 
     /// Reset the line index and byte offset
     pub fn reset(&mut self) {
-        self.line_index = 0;
-        self.bytes_offset = 0;
+        self.line_index.store(0, Ordering::Relaxed);
+        self.bytes_offset.store(0, Ordering::Relaxed);
     }
 
     pub fn seek(&mut self, line_index: usize, bytes_offset: usize) -> Result<usize, IterManError> {
@@ -154,8 +168,8 @@ impl<T: Read + Seek> StreamList<T> {
             .ok()
             .is_some()
         {
-            self.line_index = line_index;
-            self.bytes_offset = bytes_offset;
+            self.line_index.store(line_index, Ordering::Relaxed);
+            self.bytes_offset.store(bytes_offset, Ordering::Relaxed);
             return Ok(self.bytes_offset());
         }
 
@@ -167,11 +181,11 @@ impl<T: Read + Seek> StreamList<T> {
     }
 
     pub fn line_index(&self) -> usize {
-        self.line_index
+        self.line_index.load(Ordering::Relaxed)
     }
 
     pub fn bytes_offset(&self) -> usize {
-        self.bytes_offset
+        self.bytes_offset.load(Ordering::Relaxed)
     }
 }
 
@@ -297,14 +311,14 @@ mod tests {
         let mut list = MemoryList::new_round_robin(vec![2, 3, 4]);
         list.seek(2).expect("TODO: panic message");
         assert_eq!(list.next(), Some(4));
-        assert_eq!(list.index(), 3);
+        assert_eq!(list.line_index(), 3);
     }
 
     #[test]
     fn memory_list_with_seek_to() {
         let mut list = MemoryList::new_round_robin(vec![2, 3, 4]).with_seek_to(2);
         assert_eq!(list.next(), Some(4));
-        assert_eq!(list.index(), 3);
+        assert_eq!(list.line_index(), 3);
     }
 
     #[test]
@@ -355,9 +369,7 @@ mod tests {
     }
 
     fn mock_buffer_reader<'a>() -> BufReader<Cursor<&'a str>> {
-        let mock_data = "1\n2\n3\n";
-        let cursor = Cursor::new(mock_data);
-        let reader = BufReader::new(cursor);
+        let reader = BufReader::new(Cursor::new("1\n2\n3\n"));
         reader
     }
 }

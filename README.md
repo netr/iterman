@@ -12,15 +12,13 @@ This crate offers a seamless way to manage multiple collections in Rust. From ve
 ### Usage
 ```rust
 // vector iterator
-let list = MemoryList::new_rr(vec![2, 3, 4]);
+let list = MemoryList::new_round_robin(vec![2, 3, 4]); // will continue infinitely
 let collected: Vec<i32> = list.take(6).collect();
 assert_eq!(collected, [2, 3, 4, 2, 3, 4]);
 
 // stream iterator
-let mock_data = "1\n2\n3\n";
-let cursor = Cursor::new(mock_data);
-let reader = BufReader::new(cursor);
-let list = StreamList::new(reader, false);
+let reader = BufReader::new(Cursor::new("1\n2\n3\n"));
+let list = StreamList::new(reader); // will reach EOF and stop
 let collected: Vec<String> = list.collect();
 assert_eq!(collected, ["1", "2", "3"]);
 ```

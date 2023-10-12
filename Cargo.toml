@@ -13,3 +13,6 @@ rust-version = "1.71.0"
 
 [dependencies]
 thiserror = { version = "1.0.49", features = [] }
+
+[lib]
+doctest = false
