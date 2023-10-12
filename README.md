@@ -53,7 +53,7 @@ impl Manager<'_> {
                 "https://business.com/lp/current",
                 "https://business.com/lp/best",
             ]),
-            bodies: mem_list_from_dir("path/to/dir"),
+            bodies: mem_list_from_dir("path/to/dir", true), // round robin
         }
     }
 }

@@ -9,6 +9,12 @@ pub trait ListLike {
     fn iter(&mut self) -> Option<Self::Item>;
 }
 
+/// A [MemoryList] is a [ListLike] that reads from a [Vec].
+/// # Examples
+/// ```no-run
+/// let list = MemoryList::new(vec![2, 3, 4]);
+/// assert_eq!(list.collect::<Vec<i32>>(), [2, 3, 4]);
+/// ```
 pub struct MemoryList<T: Clone> {
     vec: Arc<Mutex<Vec<T>>>,
     round_robin: bool,
@@ -91,6 +97,13 @@ where
     }
 }
 
+/// A [BufferList] is a [ListLike] that reads from a [BufReader].
+/// # Examples
+/// ```no-run
+/// let reader = BufReader::new(Cursor::new("hello\nworld"));
+/// let list = BufferList::new(reader);
+/// assert_eq!(list.collect::<Vec<String>>(), ["hello", "world"]);
+/// ```
 pub struct BufferList<T: Read + Seek> {
     buf_reader: Arc<Mutex<BufReader<T>>>,
     round_robin: bool,
@@ -245,7 +258,18 @@ where
     }
 }
 
-pub fn mem_list_from_dir(path: &str) -> Result<MemoryList<String>, std::io::Error> {
+/// Create a [MemoryList] from a directory by reading each file into memory.
+/// # Examples
+/// ```no-run
+/// let list = mem_list_from_dir("src", false).unwrap();
+/// assert_eq!(list.collect::<Vec<String>>().len(), 4);
+/// ```
+/// # Errors
+/// This function will return an error if the path is not a directory.
+pub fn mem_list_from_dir(
+    path: &str,
+    round_robin: bool,
+) -> Result<MemoryList<String>, std::io::Error> {
     let mut files = vec![];
     for entry in std::fs::read_dir(path)? {
         let entry = entry?;
@@ -255,7 +279,37 @@ pub fn mem_list_from_dir(path: &str) -> Result<MemoryList<String>, std::io::Erro
             files.push(contents);
         }
     }
+
+    if round_robin {
+        return Ok(MemoryList::new_round_robin(files));
+    }
     Ok(MemoryList::new(files))
+}
+
+/// Create a [MemoryList] from a string by splitting it into chunks.
+/// # Examples
+/// ```no-run
+/// let text = "hello world";
+/// let list = mem_list_from_chunks(text, 5, true).unwrap();
+/// assert_eq!(
+///    list.take(6).collect::<Vec<String>>(),
+///   ["hello", " worl", "d", "hello", " worl", "d"]
+/// );
+/// ```
+pub fn mem_list_from_chunks(
+    text: &str,
+    chunk_by: usize,
+    round_robin: bool,
+) -> Result<MemoryList<String>, std::io::Error> {
+    let mut chunks = vec![];
+    for chunk in text.as_bytes().chunks(chunk_by) {
+        chunks.push(String::from_utf8(chunk.to_vec()).unwrap());
+    }
+
+    if round_robin {
+        return Ok(MemoryList::new_round_robin(chunks));
+    }
+    Ok(MemoryList::new(chunks))
 }
 
 #[cfg(test)]
@@ -267,12 +321,22 @@ mod tests {
     #[test]
     #[ignore]
     fn should_from_dir() {
-        let dir = mem_list_from_dir("src").unwrap();
+        let dir = mem_list_from_dir("src", false).unwrap();
         assert_eq!(dir.collect::<Vec<String>>().len(), 4);
         // buffer iterator
         let reader = BufReader::new(Cursor::new("1\n2\n3\n"));
         let list = BufferList::new(reader); // will reach EOF and stop
         assert_eq!(list.collect::<Vec<String>>(), ["1", "2", "3"]);
+    }
+
+    #[test]
+    fn it_should_create_a_mem_list_by_chunks() {
+        let text = "hello world";
+        let list = mem_list_from_chunks(text, 5, true).unwrap();
+        assert_eq!(
+            list.take(6).collect::<Vec<String>>(),
+            ["hello", " worl", "d", "hello", " worl", "d"]
+        );
     }
 
     #[test]
