@@ -119,10 +119,13 @@ impl<T: Read + Seek> ListLike for StreamList<T> {
                 self.reset();
 
                 return match self.buf_reader.read_line(&mut string) {
-                    Ok(bytes_read) => {
-                        self.incr(&bytes_read);
-                        Some(string.trim().to_string())
-                    }
+                    Ok(bytes_read) => match bytes_read {
+                        0 => None, // Needed to stop empty buffers from returning ""
+                        _ => {
+                            self.incr(&bytes_read);
+                            Some(string.trim().to_string())
+                        }
+                    },
                     Err(_) => None,
                 };
             }
@@ -173,6 +176,13 @@ mod tests {
     }
 
     #[test]
+    fn memory_list_should_return_nothing_when_empty() {
+        let list_iter = MemoryList::new_rr(vec![]);
+        let collected: Vec<i32> = list_iter.take(10).collect();
+        assert_eq!(collected, []);
+    }
+
+    #[test]
     fn stream_list_reaches_end_correctly() {
         let mock_data = "1\n2\n3\n";
         let cursor = Cursor::new(mock_data);
@@ -199,7 +209,7 @@ mod tests {
         let reader = BufReader::new(Cursor::new(""));
         let list_iter = StreamList::new_rr(reader);
 
-        let collected: Vec<String> = list_iter.take(6).collect();
+        let collected: Vec<String> = list_iter.take(10).collect();
         assert_eq!(collected.len(), 0);
     }
 }
