@@ -3,13 +3,13 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-trait ListLike {
+pub trait ListLike {
     type Item;
 
     fn iter(&mut self) -> Option<Self::Item>;
 }
 
-struct MemoryList<T: Clone> {
+pub struct MemoryList<T: Clone> {
     vec: Arc<Mutex<Vec<T>>>,
     round_robin: bool,
     line_index: AtomicUsize,
@@ -91,14 +91,14 @@ where
     }
 }
 
-struct StreamList<T: Read + Seek> {
+pub struct BufferList<T: Read + Seek> {
     buf_reader: Arc<Mutex<BufReader<T>>>,
     round_robin: bool,
     line_index: AtomicUsize,
     bytes_offset: AtomicUsize,
 }
 
-impl<T: Read + Seek> StreamList<T> {
+impl<T: Read + Seek> BufferList<T> {
     pub fn new(buf_reader: BufReader<T>) -> Self {
         Self {
             buf_reader: Arc::new(Mutex::new(buf_reader)),
@@ -108,7 +108,7 @@ impl<T: Read + Seek> StreamList<T> {
         }
     }
 
-    /// Creates a new [StreamList] with `round_robin` turned on.
+    /// Creates a new [BufferList] with `round_robin` turned on.
     pub fn new_round_robin(buf_reader: BufReader<T>) -> Self {
         Self {
             round_robin: true,
@@ -116,7 +116,7 @@ impl<T: Read + Seek> StreamList<T> {
         }
     }
 
-    /// Build a [StreamList]] and set the initial `line_index` and `bytes_offset` pointers.
+    /// Build a [BufferList]] and set the initial `line_index` and `bytes_offset` pointers.
     /// # Examples
     /// ```no-run
     /// let reader = BufReader::new(Cursor::new("hello\nworld"));
@@ -189,7 +189,7 @@ impl<T: Read + Seek> StreamList<T> {
     }
 }
 
-impl<T: Read + Seek> ListLike for StreamList<T> {
+impl<T: Read + Seek> ListLike for BufferList<T> {
     type Item = String;
 
     fn iter(&mut self) -> Option<Self::Item> {
@@ -234,15 +234,28 @@ impl<T: Read + Seek> ListLike for StreamList<T> {
     }
 }
 
-impl<T: Read + Seek> Iterator for StreamList<T>
+impl<T: Read + Seek> Iterator for BufferList<T>
 where
     T: Read + Seek,
 {
     type Item = String;
 
     fn next(&mut self) -> Option<Self::Item> {
-        StreamList::iter(self)
+        BufferList::iter(self)
     }
+}
+
+pub fn mem_list_from_dir(path: &str) -> Result<MemoryList<String>, std::io::Error> {
+    let mut files = vec![];
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() && !path.is_symlink() {
+            let contents = std::fs::read_to_string(path)?;
+            files.push(contents);
+        }
+    }
+    Ok(MemoryList::new(files))
 }
 
 #[cfg(test)]
@@ -250,6 +263,17 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
+
+    #[test]
+    #[ignore]
+    fn should_from_dir() {
+        let dir = mem_list_from_dir("src").unwrap();
+        assert_eq!(dir.collect::<Vec<String>>().len(), 4);
+        // buffer iterator
+        let reader = BufReader::new(Cursor::new("1\n2\n3\n"));
+        let list = BufferList::new(reader); // will reach EOF and stop
+        assert_eq!(list.collect::<Vec<String>>(), ["1", "2", "3"]);
+    }
 
     #[test]
     fn memory_list_reaches_end_correctly_as_i32() {
@@ -280,27 +304,27 @@ mod tests {
     }
 
     #[test]
-    fn stream_list_reaches_end_correctly() {
+    fn buffer_list_reaches_end_correctly() {
         let reader = mock_buffer_reader();
-        let list = StreamList::new(reader);
+        let list = BufferList::new(reader);
 
         let collected: Vec<String> = list.collect();
         assert_eq!(collected, ["1", "2", "3"]);
     }
 
     #[test]
-    fn stream_list_round_robins_correctly() {
+    fn buffer_list_round_robins_correctly() {
         let reader = mock_buffer_reader();
-        let list = StreamList::new_round_robin(reader);
+        let list = BufferList::new_round_robin(reader);
 
         let collected: Vec<String> = list.take(6).collect();
         assert_eq!(collected, ["1", "2", "3", "1", "2", "3"]);
     }
 
     #[test]
-    fn stream_list_should_return_nothing_with_an_empty_buffer() {
+    fn buffer_list_should_return_nothing_with_an_empty_buffer() {
         let reader = BufReader::new(Cursor::new(""));
-        let list = StreamList::new_round_robin(reader);
+        let list = BufferList::new_round_robin(reader);
 
         let collected: Vec<String> = list.take(10).collect();
         assert_eq!(collected.len(), 0);
@@ -335,9 +359,9 @@ mod tests {
     }
 
     #[test]
-    fn stream_list_should_seek() {
+    fn buffer_list_should_seek() {
         let reader = mock_buffer_reader();
-        let mut list = StreamList::new(reader);
+        let mut list = BufferList::new(reader);
         list.seek(2, 4).expect("TODO: panic message");
         assert_eq!(list.next(), Some("3".to_string()));
         assert_eq!(list.line_index(), 3);
@@ -345,18 +369,18 @@ mod tests {
     }
 
     #[test]
-    fn stream_list_with_seek_to() {
+    fn buffer_list_with_seek_to() {
         let reader = mock_buffer_reader();
-        let mut list = StreamList::new(reader).with_seek_to(2, 4);
+        let mut list = BufferList::new(reader).with_seek_to(2, 4);
         assert_eq!(list.next(), Some("3".to_string()));
         assert_eq!(list.line_index(), 3);
         assert_eq!(list.bytes_offset(), 6);
     }
 
     #[test]
-    fn stream_list_seek_should_return_false_if_out_of_bounds() {
+    fn buffer_list_seek_should_return_false_if_out_of_bounds() {
         let reader = mock_buffer_reader();
-        let mut list = StreamList::new(reader);
+        let mut list = BufferList::new(reader);
         let e = list.seek(7, 50).unwrap_err();
         assert_eq!(
             e,
