@@ -1,12 +1,17 @@
 # iterman
 
+![iterman github actions workflow](https://github.com/netr/iterman/actions/workflows/rust.yml/badge.svg)
+
+### In development
+This crate is currently in development and is not yet ready for use.
+
 ### Introduction
 This crate offers a seamless way to create and manage lists of items. It offers a simple interface for creating lists from different sources and iterating over them. It also offers a way to persist the state of the list through a customizable write function.
 
 ### Features
 - Simplified list initialization
 - Thread-safe list iteration
-- Support for different types of lists including memory lists and stream lists
+- Support for different types of lists including memory lists and buffer lists
 - Support for different style of iteration including EOF-sensitive and round-robin lists
 
 ### Usage
