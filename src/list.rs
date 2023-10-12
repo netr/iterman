@@ -1,5 +1,6 @@
 use crate::error::IterManError;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::sync::{Arc, Mutex};
 
 trait ListLike {
     type Item;
@@ -8,39 +9,43 @@ trait ListLike {
 }
 
 struct MemoryList<T: Clone> {
-    vec: Vec<T>,
+    vec: Arc<Mutex<Vec<T>>>,
     round_robin: bool,
     line_index: usize,
 }
 
 impl<T: Clone> MemoryList<T> {
-    pub fn new(vec: Vec<T>, round_robin: bool) -> Self {
+    pub fn new(vec: Vec<T>) -> Self {
         Self {
-            vec,
-            round_robin,
+            vec: Arc::new(Mutex::new(vec)),
+            round_robin: false,
             line_index: 0,
         }
     }
 
     /// Creates a new [MemoryList] with `round_robin` turned on.
-    pub fn new_rr(vec: Vec<T>) -> Self {
+    pub fn new_round_robin(vec: Vec<T>) -> Self {
         Self {
-            vec,
             round_robin: true,
-            line_index: 0,
+            ..Self::new(vec)
         }
+    }
+
+    pub fn with_seek_to(mut self, line_index: usize) -> Self {
+        self.seek(line_index).unwrap_or_default();
+        self
     }
 
     /// Seek
     pub fn seek(&mut self, line_index: usize) -> Result<usize, IterManError> {
-        if line_index < self.vec.len() {
+        if line_index < self.vec.lock().unwrap().len() {
             self.line_index = line_index;
             return Ok(line_index);
         }
 
         Err(IterManError::MemoryOutOfBounds {
             line_index,
-            max_len: self.vec.len(),
+            max_len: self.vec.lock().unwrap().len(),
         })
     }
 
@@ -53,12 +58,12 @@ impl<T: Clone> ListLike for MemoryList<T> {
     type Item = T;
 
     fn iter(&mut self) -> Option<Self::Item> {
-        if self.round_robin && self.line_index >= self.vec.len() {
+        if self.round_robin && self.line_index >= self.vec.lock().unwrap().len() {
             self.line_index = 0;
         }
 
-        if self.line_index < self.vec.len() {
-            let val = self.vec[self.line_index].clone();
+        if self.line_index < self.vec.lock().unwrap().len() {
+            let val = self.vec.lock().unwrap()[self.line_index].clone();
             self.line_index += 1;
             Some(val)
         } else {
@@ -79,30 +84,33 @@ where
 }
 
 struct StreamList<T: Read + Seek> {
-    buf_reader: BufReader<T>,
+    buf_reader: Arc<Mutex<BufReader<T>>>,
     round_robin: bool,
     line_index: usize,
     bytes_offset: usize,
 }
 
 impl<T: Read + Seek> StreamList<T> {
-    pub fn new(buf_reader: BufReader<T>, round_robin: bool) -> Self {
+    pub fn new(buf_reader: BufReader<T>) -> Self {
         Self {
-            buf_reader,
-            round_robin,
+            buf_reader: Arc::new(Mutex::new(buf_reader)),
+            round_robin: false,
             line_index: 0,
             bytes_offset: 0,
         }
     }
 
     /// Creates a new [StreamList] with `round_robin` turned on.
-    pub fn new_rr(buf_reader: BufReader<T>) -> Self {
+    pub fn new_round_robin(buf_reader: BufReader<T>) -> Self {
         Self {
-            buf_reader,
             round_robin: true,
-            line_index: 0,
-            bytes_offset: 0,
+            ..Self::new(buf_reader)
         }
+    }
+
+    pub fn with_seek_to(mut self, line_index: usize, bytes_offset: usize) -> Self {
+        self.seek(line_index, bytes_offset).unwrap_or_default();
+        self
     }
 
     /// Used internally to manage the line index and byte offset
@@ -119,7 +127,7 @@ impl<T: Read + Seek> StreamList<T> {
 
     pub fn seek(&mut self, line_index: usize, bytes_offset: usize) -> Result<usize, IterManError> {
         // https://doc.rust-lang.org/stable/std/io/trait.Seek.html#method.stream_len
-        let stream_len = match self.buf_reader.seek(SeekFrom::End(0)).ok() {
+        let stream_len = match self.buf_reader.lock().unwrap().seek(SeekFrom::End(0)).ok() {
             None => {
                 return Err(IterManError::StreamOutOfBounds {
                     line_index,
@@ -140,6 +148,8 @@ impl<T: Read + Seek> StreamList<T> {
 
         if self
             .buf_reader
+            .lock()
+            .unwrap()
             .seek(SeekFrom::Start(bytes_offset as u64))
             .ok()
             .is_some()
@@ -171,18 +181,29 @@ impl<T: Read + Seek> ListLike for StreamList<T> {
     fn iter(&mut self) -> Option<Self::Item> {
         let mut string = String::new();
 
-        match self.buf_reader.read_line(&mut string).ok()? {
+        // Scope of immutable borrow is limited here.
+        match {
+            let mut buf = self.buf_reader.lock().ok()?;
+            buf.read_line(&mut string).ok()?
+        } {
             0 => {
                 if !self.round_robin {
                     return None;
                 }
 
-                self.buf_reader.seek(SeekFrom::Start(0)).ok()?;
+                {
+                    let mut buf = self.buf_reader.lock().ok()?;
+                    buf.seek(SeekFrom::Start(0)).ok()?;
+                }
+
                 self.reset();
 
-                return match self.buf_reader.read_line(&mut string) {
+                return match {
+                    let mut buf = self.buf_reader.lock().ok()?;
+                    buf.read_line(&mut string)
+                } {
                     Ok(bytes_read) => match bytes_read {
-                        0 => None, // Needed to stop empty buffers from returning ""
+                        0 => None, // Needed to stop empty buffer from returning ""
                         _ => {
                             self.incr(&bytes_read);
                             Some(string.trim().to_string())
@@ -218,28 +239,28 @@ mod tests {
 
     #[test]
     fn memory_list_reaches_end_correctly_as_i32() {
-        let list = MemoryList::new(vec![2, 3, 4], false);
+        let list = MemoryList::new(vec![2, 3, 4]);
         let collected: Vec<i32> = list.collect();
         assert_eq!(collected, [2, 3, 4]);
     }
 
     #[test]
     fn memory_list_reaches_end_correctly_as_str() {
-        let list = MemoryList::new(vec!["2", "3", "4"], false);
+        let list = MemoryList::new(vec!["2", "3", "4"]);
         let collected: Vec<&str> = list.collect();
         assert_eq!(collected, ["2", "3", "4"]);
     }
 
     #[test]
     fn memory_list_round_robins_correctly() {
-        let list = MemoryList::new_rr(vec![2, 3, 4]);
+        let list = MemoryList::new_round_robin(vec![2, 3, 4]);
         let collected: Vec<i32> = list.take(6).collect();
         assert_eq!(collected, [2, 3, 4, 2, 3, 4]);
     }
 
     #[test]
     fn memory_list_should_return_nothing_when_empty() {
-        let list = MemoryList::new_rr(vec![]);
+        let list = MemoryList::new_round_robin(vec![]);
         let collected: Vec<i32> = list.take(10).collect();
         assert_eq!(collected, []);
     }
@@ -247,7 +268,7 @@ mod tests {
     #[test]
     fn stream_list_reaches_end_correctly() {
         let reader = mock_buffer_reader();
-        let list = StreamList::new(reader, false);
+        let list = StreamList::new(reader);
 
         let collected: Vec<String> = list.collect();
         assert_eq!(collected, ["1", "2", "3"]);
@@ -256,7 +277,7 @@ mod tests {
     #[test]
     fn stream_list_round_robins_correctly() {
         let reader = mock_buffer_reader();
-        let list = StreamList::new_rr(reader);
+        let list = StreamList::new_round_robin(reader);
 
         let collected: Vec<String> = list.take(6).collect();
         assert_eq!(collected, ["1", "2", "3", "1", "2", "3"]);
@@ -265,7 +286,7 @@ mod tests {
     #[test]
     fn stream_list_should_return_nothing_with_an_empty_buffer() {
         let reader = BufReader::new(Cursor::new(""));
-        let list = StreamList::new_rr(reader);
+        let list = StreamList::new_round_robin(reader);
 
         let collected: Vec<String> = list.take(10).collect();
         assert_eq!(collected.len(), 0);
@@ -273,15 +294,22 @@ mod tests {
 
     #[test]
     fn memory_list_should_seek() {
-        let mut list = MemoryList::new_rr(vec![2, 3, 4]);
+        let mut list = MemoryList::new_round_robin(vec![2, 3, 4]);
         list.seek(2).expect("TODO: panic message");
         assert_eq!(list.next(), Some(4));
         assert_eq!(list.index(), 3);
     }
 
     #[test]
+    fn memory_list_with_seek_to() {
+        let mut list = MemoryList::new_round_robin(vec![2, 3, 4]).with_seek_to(2);
+        assert_eq!(list.next(), Some(4));
+        assert_eq!(list.index(), 3);
+    }
+
+    #[test]
     fn memory_list_seek_should_return_false_if_out_of_bounds() {
-        let mut list = MemoryList::new(vec![2, 3, 4], false);
+        let mut list = MemoryList::new(vec![2, 3, 4]);
         let e = list.seek(6).unwrap_err();
         assert_eq!(
             e,
@@ -295,8 +323,17 @@ mod tests {
     #[test]
     fn stream_list_should_seek() {
         let reader = mock_buffer_reader();
-        let mut list = StreamList::new(reader, false);
+        let mut list = StreamList::new(reader);
         list.seek(2, 4).expect("TODO: panic message");
+        assert_eq!(list.next(), Some("3".to_string()));
+        assert_eq!(list.line_index(), 3);
+        assert_eq!(list.bytes_offset(), 6);
+    }
+
+    #[test]
+    fn stream_list_with_seek_to() {
+        let reader = mock_buffer_reader();
+        let mut list = StreamList::new(reader).with_seek_to(2, 4);
         assert_eq!(list.next(), Some("3".to_string()));
         assert_eq!(list.line_index(), 3);
         assert_eq!(list.bytes_offset(), 6);
@@ -305,7 +342,7 @@ mod tests {
     #[test]
     fn stream_list_seek_should_return_false_if_out_of_bounds() {
         let reader = mock_buffer_reader();
-        let mut list = StreamList::new(reader, false);
+        let mut list = StreamList::new(reader);
         let e = list.seek(7, 50).unwrap_err();
         assert_eq!(
             e,
