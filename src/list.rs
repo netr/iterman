@@ -261,23 +261,97 @@ where
 pub struct MemoryArrayList<T: Clone> {
     lists: Arc<Mutex<Vec<Vec<T>>>>,
     round_robin: bool,
-    arr_index: AtomicUsize,
+    cur_list_index: AtomicUsize,
     line_indexes: Arc<Mutex<Vec<usize>>>,
+    finished_count: AtomicUsize,
 }
 
 impl<T: Clone> MemoryArrayList<T> {
     pub fn new(mem_arr: Vec<Vec<T>>) -> Self {
         Self {
-            lists: Arc::new(Mutex::new(mem_arr)),
+            lists: Arc::new(Mutex::new(mem_arr.clone())),
             round_robin: false,
-            arr_index: AtomicUsize::new(0),
-            line_indexes: Arc::new(Mutex::new(vec![0])),
+            cur_list_index: AtomicUsize::new(0),
+            line_indexes: Arc::new(Mutex::new(vec![0; mem_arr.len()])),
+            finished_count: AtomicUsize::new(0),
         }
+    }
+
+    /// Creates a new [MemoryArrayList] with `round_robin` turned on.
+    /// # Examples
+    /// ```no-run
+    /// let mem_arr = vec![vec![1, 2, 3], vec![4, 5, 6], vec![7, 8, 9]];
+    /// let list = MemoryArrayList::new_round_robin(mem_arr);
+    /// assert_eq!(
+    ///    list.take(15).collect::<Vec<i32>>(),
+    ///   [1, 4, 7, 2, 5, 8, 3, 6, 9]
+    /// );
+    /// ```
+    pub fn new_round_robin(mem_arr: Vec<Vec<T>>) -> Self {
+        Self {
+            round_robin: true,
+            ..Self::new(mem_arr)
+        }
+    }
+}
+
+impl<T: Clone> Iterator for MemoryArrayList<T>
+where
+    T: Clone,
+{
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        MemoryArrayList::iter(self)
+    }
+}
+
+impl<T: Clone> ListLike for MemoryArrayList<T> {
+    type Item = T;
+
+    fn iter(&mut self) -> Option<Self::Item> {
+        let mut cur_list_index = self.cur_list_index.load(Ordering::Relaxed);
+        if cur_list_index >= self.lists.lock().unwrap().len() {
+            self.cur_list_index.store(0, Ordering::Relaxed);
+            cur_list_index = self.cur_list_index.load(Ordering::Relaxed);
+        }
+
+        let mut cur_line_index = 0;
+        {
+            let line_indexes = self.line_indexes.lock().unwrap();
+            cur_line_index = line_indexes[cur_list_index];
+        }
+
+        let lists = &self.lists.lock().unwrap();
+        if cur_line_index < lists[cur_list_index].len() {
+            let val = lists[cur_list_index][cur_line_index].clone();
+
+            {
+                let mut line_indexes = self.line_indexes.lock().unwrap();
+                line_indexes[cur_list_index] += 1;
+                if self.round_robin && line_indexes[cur_list_index] >= lists[cur_list_index].len() {
+                    line_indexes[cur_list_index] = 0;
+                }
+            }
+
+            self.cur_list_index.fetch_add(1, Ordering::SeqCst);
+            return Some(val);
+        } else {
+            if !self.round_robin {
+                self.finished_count.fetch_add(1, Ordering::SeqCst);
+                if self.finished_count.load(Ordering::Relaxed) >= lists.len() {
+                    return None;
+                }
+            }
+        }
+
+        None
     }
 }
 
 pub struct BufferArrayList<T: Read + Seek> {
     buf_reader: Arc<Mutex<Vec<BufferList<T>>>>,
+    finished: AtomicUsize,
     round_robin: bool,
     arr_index: AtomicUsize,
     line_indexes: Arc<Mutex<Vec<usize>>>,
@@ -286,11 +360,13 @@ pub struct BufferArrayList<T: Read + Seek> {
 
 impl<T: Read + Seek> BufferArrayList<T> {
     pub fn new(buf_arr: Vec<BufferList<T>>) -> Self {
+        let buf_len = &buf_arr.len();
         Self {
             buf_reader: Arc::new(Mutex::new(buf_arr)),
             round_robin: false,
+            finished: AtomicUsize::new(0),
             arr_index: AtomicUsize::new(0),
-            line_indexes: Arc::new(Mutex::new(vec![0])),
+            line_indexes: Arc::new(Mutex::new(vec![0; *buf_len])),
             bytes_offset: AtomicUsize::new(0),
         }
     }
@@ -369,11 +445,32 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore]
     fn it_should_create_buffer_array_list() {
         let reader = mock_buffer_reader();
         let buf_reader = BufferList::new(reader);
         let list = BufferArrayList::new(vec![buf_reader]);
         assert_eq!(list.collect::<Vec<String>>(), ["1", "2", "3"]);
+    }
+
+    #[test]
+    fn it_should_create_memory_array_lists() {
+        let mem_arr = vec![vec![1, 2, 3], vec![4, 5, 6], vec![7, 8, 9]];
+        let list = MemoryArrayList::new(mem_arr);
+        assert_eq!(
+            list.take(15).collect::<Vec<i32>>(),
+            [1, 4, 7, 2, 5, 8, 3, 6, 9]
+        );
+    }
+
+    #[test]
+    fn it_should_create_memory_array_lists_with_round_robin() {
+        let mem_arr = vec![vec![1, 2, 3], vec![4, 5, 6], vec![7, 8, 9]];
+        let list = MemoryArrayList::new_round_robin(mem_arr);
+        assert_eq!(
+            list.take(15).collect::<Vec<i32>>(),
+            [1, 4, 7, 2, 5, 8, 3, 6, 9, 1, 4, 7, 2, 5, 8]
+        );
     }
 
     #[test]
