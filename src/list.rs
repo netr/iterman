@@ -1,12 +1,10 @@
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::error::Error;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 
 trait ListLike {
     type Item;
 
     fn iter(&mut self) -> Option<Self::Item>;
-
-    // TODO: Add write() method
-    // TODO: Add seek() method
 }
 
 struct MemoryList<T: Clone> {
@@ -31,6 +29,16 @@ impl<T: Clone> MemoryList<T> {
             round_robin: true,
             index: 0,
         }
+    }
+
+    ///
+    pub fn seek(&mut self, index: usize) -> bool {
+        if index < self.vec.len() {
+            self.index = index;
+            return true;
+        }
+
+        false
     }
 }
 
@@ -96,10 +104,33 @@ impl<T: Read + Seek> StreamList<T> {
         self.bytes_offset += bytes_read;
     }
 
-    /// Used internally to reset the line index and byte offset
-    fn reset(&mut self) {
+    /// Reset the line index and byte offset
+    pub fn reset(&mut self) {
         self.line_index = 0;
         self.bytes_offset = 0;
+    }
+
+    pub fn seek(&mut self, line_index: usize, offset: usize) -> bool {
+        if self
+            .buf_reader
+            .seek(SeekFrom::Start(offset as u64))
+            .ok()
+            .is_some()
+        {
+            self.line_index = line_index;
+            self.bytes_offset = offset;
+            return true;
+        }
+
+        false
+    }
+
+    pub fn line_index(&self) -> usize {
+        self.line_index
+    }
+
+    pub fn bytes_offset(&self) -> usize {
+        self.bytes_offset
     }
 }
 
@@ -184,9 +215,7 @@ mod tests {
 
     #[test]
     fn stream_list_reaches_end_correctly() {
-        let mock_data = "1\n2\n3\n";
-        let cursor = Cursor::new(mock_data);
-        let reader = BufReader::new(cursor);
+        let reader = mock_buffer_reader();
         let list_iter = StreamList::new(reader, false);
 
         let collected: Vec<String> = list_iter.collect();
@@ -195,9 +224,7 @@ mod tests {
 
     #[test]
     fn stream_list_round_robins_correctly() {
-        let mock_data = "1\n2\n3\n";
-        let cursor = Cursor::new(mock_data);
-        let reader = BufReader::new(cursor);
+        let reader = mock_buffer_reader();
         let list_iter = StreamList::new_rr(reader);
 
         let collected: Vec<String> = list_iter.take(6).collect();
@@ -211,5 +238,35 @@ mod tests {
 
         let collected: Vec<String> = list_iter.take(10).collect();
         assert_eq!(collected.len(), 0);
+    }
+
+    #[test]
+    fn memory_list_should_seek() {
+        let mut list_iter = MemoryList::new_rr(vec![2, 3, 4]);
+        list_iter.seek(2);
+        assert_eq!(list_iter.next(), Some(4));
+    }
+
+    #[test]
+    fn memory_list_seek_should_return_false_if_out_of_bounds() {
+        let mut list_iter = MemoryList::new_rr(vec![2, 3, 4]);
+        assert!(!list_iter.seek(7));
+    }
+
+    #[test]
+    fn stream_list_should_seek() {
+        let reader = mock_buffer_reader();
+        let mut list_iter = StreamList::new(reader, false);
+        list_iter.seek(2, 4);
+        assert_eq!(list_iter.next(), Some("3".to_string()));
+        assert_eq!(list_iter.line_index(), 3);
+        assert_eq!(list_iter.bytes_offset(), 6);
+    }
+
+    fn mock_buffer_reader<'a>() -> BufReader<Cursor<&'a str>> {
+        let mock_data = "1\n2\n3\n";
+        let cursor = Cursor::new(mock_data);
+        let reader = BufReader::new(cursor);
+        reader
     }
 }
