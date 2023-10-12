@@ -258,6 +258,7 @@ where
     }
 }
 
+/// A [MemoryArrayList] is a [ListLike] that reads from a [Vec] of [Vec]s.
 pub struct MemoryArrayList<T: Clone> {
     lists: Arc<Mutex<Vec<Vec<T>>>>,
     round_robin: bool,
@@ -267,6 +268,16 @@ pub struct MemoryArrayList<T: Clone> {
 }
 
 impl<T: Clone> MemoryArrayList<T> {
+    /// Creates a new [MemoryArrayList] with `round_robin` turned off.
+    /// # Examples
+    /// ```no-run
+    /// let mem_arr = vec![vec![1, 2, 3], vec![4, 5, 6], vec![7, 8, 9]];
+    /// let list = MemoryArrayList::new(mem_arr);
+    /// assert_eq!(
+    ///   list.collect::<Vec<i32>>(),
+    ///  [1, 4, 7, 2, 5, 8, 3, 6, 9]
+    /// );
+    /// ```
     pub fn new(mem_arr: Vec<Vec<T>>) -> Self {
         Self {
             lists: Arc::new(Mutex::new(mem_arr.clone())),
@@ -316,22 +327,16 @@ impl<T: Clone> ListLike for MemoryArrayList<T> {
             cur_list_index = self.cur_list_index.load(Ordering::Relaxed);
         }
 
-        let mut cur_line_index = 0;
-        {
-            let line_indexes = self.line_indexes.lock().unwrap();
-            cur_line_index = line_indexes[cur_list_index];
-        }
+        let mut line_indexes = self.line_indexes.lock().unwrap();
+        let cur_line_index = line_indexes[cur_list_index];
 
         let lists = &self.lists.lock().unwrap();
         if cur_line_index < lists[cur_list_index].len() {
             let val = lists[cur_list_index][cur_line_index].clone();
 
-            {
-                let mut line_indexes = self.line_indexes.lock().unwrap();
-                line_indexes[cur_list_index] += 1;
-                if self.round_robin && line_indexes[cur_list_index] >= lists[cur_list_index].len() {
-                    line_indexes[cur_list_index] = 0;
-                }
+            line_indexes[cur_list_index] += 1;
+            if self.round_robin && line_indexes[cur_list_index] >= lists[cur_list_index].len() {
+                line_indexes[cur_list_index] = 0;
             }
 
             self.cur_list_index.fetch_add(1, Ordering::SeqCst);
@@ -379,7 +384,7 @@ where
     type Item = String;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut string = String::new();
+        let string = String::new();
         Some(string)
     }
 }

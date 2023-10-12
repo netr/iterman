@@ -14,6 +14,17 @@ This crate offers a seamless way to create and manage lists of items. It offers 
 - Support for different types of lists including memory lists and buffer lists
 - Support for different style of iteration including EOF-sensitive and round-robin lists
 
+### TODO
+- [ ] Add support for more types of lists
+    - [ ] Finished `BufferArrayList`
+    - [ ] Add ArrayList Iteration Strategies
+        - [ ] FinishFirstStrategy
+        - [ ] RotateListStrategy (default)
+- [ ] Add support for more types of write functions
+- [ ] Shuffle List
+- [ ] Reverse List
+- [ ] Shuffle and Repeat List
+
 ### Usage
 ```rust
 use std::io::{BufReader, Cursor};
@@ -105,13 +116,3 @@ We welcome contributions! Here's how you can contribute:
 8. Create a Pull Request on GitHub.
 
 Please make sure your contributions adhere to our coding guidelines.
-
-
-### TODO
-```markdown
-- [ ] Add support for more types of lists
-    - [ ] Create `DirList` that can be initialized with a directory and each file is a list item
-    - [ ] Create a `ChunkList` that can be initialized with a list and a chunk size
-    - [ ] Create a list that can be initialized with a closure
-- [ ] Add support for more types of write functions
-```
