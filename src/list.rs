@@ -1,5 +1,5 @@
-use std::error::Error;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use crate::error::IterManError;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
 trait ListLike {
     type Item;
@@ -10,7 +10,7 @@ trait ListLike {
 struct MemoryList<T: Clone> {
     vec: Vec<T>,
     round_robin: bool,
-    index: usize,
+    line_index: usize,
 }
 
 impl<T: Clone> MemoryList<T> {
@@ -18,7 +18,7 @@ impl<T: Clone> MemoryList<T> {
         Self {
             vec,
             round_robin,
-            index: 0,
+            line_index: 0,
         }
     }
 
@@ -27,18 +27,25 @@ impl<T: Clone> MemoryList<T> {
         Self {
             vec,
             round_robin: true,
-            index: 0,
+            line_index: 0,
         }
     }
 
-    ///
-    pub fn seek(&mut self, index: usize) -> bool {
-        if index < self.vec.len() {
-            self.index = index;
-            return true;
+    /// Seek
+    pub fn seek(&mut self, line_index: usize) -> Result<usize, IterManError> {
+        if line_index < self.vec.len() {
+            self.line_index = line_index;
+            return Ok(line_index);
         }
 
-        false
+        Err(IterManError::OutOfBounds {
+            idx: line_index,
+            limits: self.vec.len(),
+        })
+    }
+
+    pub fn index(&self) -> usize {
+        self.line_index
     }
 }
 
@@ -46,13 +53,13 @@ impl<T: Clone> ListLike for MemoryList<T> {
     type Item = T;
 
     fn iter(&mut self) -> Option<Self::Item> {
-        if self.round_robin && self.index >= self.vec.len() {
-            self.index = 0;
+        if self.round_robin && self.line_index >= self.vec.len() {
+            self.line_index = 0;
         }
 
-        if self.index < self.vec.len() {
-            let val = self.vec[self.index].clone();
-            self.index += 1;
+        if self.line_index < self.vec.len() {
+            let val = self.vec[self.line_index].clone();
+            self.line_index += 1;
             Some(val)
         } else {
             None
@@ -110,19 +117,40 @@ impl<T: Read + Seek> StreamList<T> {
         self.bytes_offset = 0;
     }
 
-    pub fn seek(&mut self, line_index: usize, offset: usize) -> bool {
+    pub fn seek(&mut self, line_index: usize, bytes_offset: usize) -> Result<usize, IterManError> {
+        // https://doc.rust-lang.org/stable/std/io/trait.Seek.html#method.stream_len
+        let stream_len = match self.buf_reader.seek(SeekFrom::End(0)).ok() {
+            None => {
+                return Err(IterManError::OutOfBounds {
+                    idx: bytes_offset,
+                    limits: 0,
+                })
+            }
+            Some(len) => len,
+        };
+
+        if stream_len < bytes_offset as u64 {
+            return Err(IterManError::OutOfBounds {
+                idx: bytes_offset,
+                limits: stream_len as usize,
+            });
+        }
+
         if self
             .buf_reader
-            .seek(SeekFrom::Start(offset as u64))
+            .seek(SeekFrom::Start(bytes_offset as u64))
             .ok()
             .is_some()
         {
             self.line_index = line_index;
-            self.bytes_offset = offset;
-            return true;
+            self.bytes_offset = bytes_offset;
+            return Ok(self.bytes_offset());
         }
 
-        false
+        Err(IterManError::OutOfBounds {
+            idx: bytes_offset,
+            limits: stream_len as usize,
+        })
     }
 
     pub fn line_index(&self) -> usize {
@@ -243,24 +271,34 @@ mod tests {
     #[test]
     fn memory_list_should_seek() {
         let mut list_iter = MemoryList::new_rr(vec![2, 3, 4]);
-        list_iter.seek(2);
+        list_iter.seek(2).expect("TODO: panic message");
         assert_eq!(list_iter.next(), Some(4));
+        assert_eq!(list_iter.index(), 3);
     }
 
     #[test]
     fn memory_list_seek_should_return_false_if_out_of_bounds() {
-        let mut list_iter = MemoryList::new_rr(vec![2, 3, 4]);
-        assert!(!list_iter.seek(7));
+        let mut list_iter = MemoryList::new(vec![2, 3, 4], false);
+        let e = list_iter.seek(6).unwrap_err();
+        assert_eq!(e.to_string(), "invalid index 6, expected at most 3");
     }
 
     #[test]
     fn stream_list_should_seek() {
         let reader = mock_buffer_reader();
         let mut list_iter = StreamList::new(reader, false);
-        list_iter.seek(2, 4);
+        list_iter.seek(2, 4).expect("TODO: panic message");
         assert_eq!(list_iter.next(), Some("3".to_string()));
         assert_eq!(list_iter.line_index(), 3);
         assert_eq!(list_iter.bytes_offset(), 6);
+    }
+
+    #[test]
+    fn stream_list_seek_should_return_false_if_out_of_bounds() {
+        let reader = mock_buffer_reader();
+        let mut list_iter = StreamList::new(reader, false);
+        let e = list_iter.seek(7, 50).unwrap_err();
+        assert_eq!(e.to_string(), "invalid index 50, expected at most 6");
     }
 
     fn mock_buffer_reader<'a>() -> BufReader<Cursor<&'a str>> {
