@@ -1,0 +1,14 @@
+[package]
+name = "iterman"
+version = "0.1.0"
+edition = "2021"
+authors = ["Corey Jackson <programmatical@gmail.com>"]
+#categories = ["command-line-utilities"]
+description = "A persistent iterator manager for Rust"
+homepage = "https://github.com/netr/iterman"
+repository = "https://github.com/netr/iterman"
+license = "MIT OR Apache-2.0"
+exclude = []
+rust-version = "1.71.0"
+
+[dependencies]
