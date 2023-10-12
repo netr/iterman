@@ -11,25 +11,27 @@ This crate offers a seamless way to manage multiple collections in Rust. From ve
 
 ### Usage
 ```rust
-// Initialize manager
-let mut manager = ListManager::new();
+// vector iterator
+let list = MemoryList::new_rr(vec![2, 3, 4]);
+let collected: Vec<i32> = list.take(6).collect();
+assert_eq!(collected, [2, 3, 4, 2, 3, 4]);
 
-// Add named list
-manager.add_list("test", vec![1, 2, 3]);
-
-// Iterate over list
-while let Some(item) = manager.get_list_by_name("test").next() {
-  println!("{}", item);
-}
+// stream iterator
+let mock_data = "1\n2\n3\n";
+let cursor = Cursor::new(mock_data);
+let reader = BufReader::new(cursor);
+let list = StreamList::new(reader, false);
+let collected: Vec<String> = list.collect();
+assert_eq!(collected, ["1", "2", "3"]);
 ```
 
 ## Installation
 
-To use [crate-name], add it as a dependency in your `Cargo.toml`:
+To use [iterman], add it as a dependency in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-crate-name = "0.1.0"
+iterman = "0.1.0"
 ```
 
 ### Contribution Guidelines Section
@@ -41,7 +43,7 @@ This section is crucial for open-source projects as it sets the tone for how con
 We welcome contributions! Here's how you can contribute:
 
 1. Fork the repository.
-2. Clone your fork: `git clone https://github.com/yourusername/crate-name.git`
+2. Clone your fork: `git clone https://github.com/netr/iterman.git`
 3. Create a new branch: `git checkout -b my-feature-branch`
 4. Make your changes.
 5. Run tests: `cargo test`

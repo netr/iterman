@@ -218,71 +218,71 @@ mod tests {
 
     #[test]
     fn memory_list_reaches_end_correctly_as_i32() {
-        let list_iter = MemoryList::new(vec![2, 3, 4], false);
-        let collected: Vec<i32> = list_iter.collect();
+        let list = MemoryList::new(vec![2, 3, 4], false);
+        let collected: Vec<i32> = list.collect();
         assert_eq!(collected, [2, 3, 4]);
     }
 
     #[test]
     fn memory_list_reaches_end_correctly_as_str() {
-        let list_iter = MemoryList::new(vec!["2", "3", "4"], false);
-        let collected: Vec<&str> = list_iter.collect();
+        let list = MemoryList::new(vec!["2", "3", "4"], false);
+        let collected: Vec<&str> = list.collect();
         assert_eq!(collected, ["2", "3", "4"]);
     }
 
     #[test]
     fn memory_list_round_robins_correctly() {
-        let list_iter = MemoryList::new_rr(vec![2, 3, 4]);
-        let collected: Vec<i32> = list_iter.take(6).collect();
+        let list = MemoryList::new_rr(vec![2, 3, 4]);
+        let collected: Vec<i32> = list.take(6).collect();
         assert_eq!(collected, [2, 3, 4, 2, 3, 4]);
     }
 
     #[test]
     fn memory_list_should_return_nothing_when_empty() {
-        let list_iter = MemoryList::new_rr(vec![]);
-        let collected: Vec<i32> = list_iter.take(10).collect();
+        let list = MemoryList::new_rr(vec![]);
+        let collected: Vec<i32> = list.take(10).collect();
         assert_eq!(collected, []);
     }
 
     #[test]
     fn stream_list_reaches_end_correctly() {
         let reader = mock_buffer_reader();
-        let list_iter = StreamList::new(reader, false);
+        let list = StreamList::new(reader, false);
 
-        let collected: Vec<String> = list_iter.collect();
+        let collected: Vec<String> = list.collect();
         assert_eq!(collected, ["1", "2", "3"]);
     }
 
     #[test]
     fn stream_list_round_robins_correctly() {
         let reader = mock_buffer_reader();
-        let list_iter = StreamList::new_rr(reader);
+        let list = StreamList::new_rr(reader);
 
-        let collected: Vec<String> = list_iter.take(6).collect();
+        let collected: Vec<String> = list.take(6).collect();
         assert_eq!(collected, ["1", "2", "3", "1", "2", "3"]);
     }
 
     #[test]
     fn stream_list_should_return_nothing_with_an_empty_buffer() {
         let reader = BufReader::new(Cursor::new(""));
-        let list_iter = StreamList::new_rr(reader);
+        let list = StreamList::new_rr(reader);
 
-        let collected: Vec<String> = list_iter.take(10).collect();
+        let collected: Vec<String> = list.take(10).collect();
         assert_eq!(collected.len(), 0);
     }
 
     #[test]
     fn memory_list_should_seek() {
-        let mut list_iter = MemoryList::new_rr(vec![2, 3, 4]);
-        list_iter.seek(2).expect("TODO: panic message");
-        assert_eq!(list_iter.next(), Some(4));
-        assert_eq!(list_iter.index(), 3);
+        let mut list = MemoryList::new_rr(vec![2, 3, 4]);
+        list.seek(2).expect("TODO: panic message");
+        assert_eq!(list.next(), Some(4));
+        assert_eq!(list.index(), 3);
     }
 
     #[test]
     fn memory_list_seek_should_return_false_if_out_of_bounds() {
-        let mut list_iter = MemoryList::new(vec![2, 3, 4], false);
-        let e = list_iter.seek(6).unwrap_err();
+        let mut list = MemoryList::new(vec![2, 3, 4], false);
+        let e = list.seek(6).unwrap_err();
         assert_eq!(
             e,
             IterManError::MemoryOutOfBounds {
@@ -295,18 +295,18 @@ mod tests {
     #[test]
     fn stream_list_should_seek() {
         let reader = mock_buffer_reader();
-        let mut list_iter = StreamList::new(reader, false);
-        list_iter.seek(2, 4).expect("TODO: panic message");
-        assert_eq!(list_iter.next(), Some("3".to_string()));
-        assert_eq!(list_iter.line_index(), 3);
-        assert_eq!(list_iter.bytes_offset(), 6);
+        let mut list = StreamList::new(reader, false);
+        list.seek(2, 4).expect("TODO: panic message");
+        assert_eq!(list.next(), Some("3".to_string()));
+        assert_eq!(list.line_index(), 3);
+        assert_eq!(list.bytes_offset(), 6);
     }
 
     #[test]
     fn stream_list_seek_should_return_false_if_out_of_bounds() {
         let reader = mock_buffer_reader();
-        let mut list_iter = StreamList::new(reader, false);
-        let e = list_iter.seek(7, 50).unwrap_err();
+        let mut list = StreamList::new(reader, false);
+        let e = list.seek(7, 50).unwrap_err();
         assert_eq!(
             e,
             IterManError::StreamOutOfBounds {
